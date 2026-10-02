@@ -6,7 +6,7 @@ The ImunifyAV web UI is not used in this project; everything is done from the co
 
 ## Installation (stand-alone, no panel)
 
-Supported OS for stand-alone: Debian 11, 12, 13; Ubuntu 22.04, 24.04, 26.04; AlmaLinux 8, 9, 10; Rocky 8, 9; CentOS/RHEL/CloudLinux 7, 8, 9. Hardware: 512 MB RAM, 20 GB disk, x86_64.
+Supported OS for stand-alone: Debian 9 (agent up to 6.11), 10 (buster-backports), 11, 12, 13; Ubuntu 22.04, 24.04, 26.04; AlmaLinux 8, 9, 10; Rocky 8, 9; CentOS/RHEL/CloudLinux 7, 8, 9. Hardware: 512 MB RAM, 20 GB disk, x86_64.
 
 Before the installer, `/etc/sysconfig/imunify360/integration.conf` with `ui_path` is mandatory. The web UI is a SPA served by a web server; if the UI is not used, the path can be an empty directory.
 
