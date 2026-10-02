@@ -480,8 +480,9 @@ else
         if [ -t 0 ]; then
             echo
             echo "The nightly cron job runs 'v-imav-scan-all' (an ImunifyAV scan of the whole"
-            echo "/home) every day at 03:00 and writes a summary to $VESTA/data/imav/reports/."
-            echo "Free ImunifyAV otherwise scans in the background only once a month."
+            echo "/home) every day at 03:00; findings are reported by the notification hook."
+            echo "The built-in ImunifyAV background scan has been switched off by this installer,"
+            echo "so without the cron job nothing is scanned unless a v-imav-* command is run."
             read -r -p "Install the nightly cron job $CRON_TARGET? [y/N]: " answer
             case $answer in
                 y|Y|yes|YES|Yes) with_cron='yes' ;;
