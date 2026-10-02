@@ -152,8 +152,10 @@ if [ ! -f /etc/debian_version ]; then
     fail "only Debian is supported"
 fi
 debian_release=$(cut -d . -f 1 /etc/debian_version)
-if [ "$debian_release" -lt 11 ] 2>/dev/null; then
-    fail "Debian $debian_release is not supported by ImunifyAV stand-alone (11, 12 or 13 required)"
+if [ "$debian_release" -lt 10 ] 2>/dev/null; then
+    fail "Debian $debian_release is not supported (10, 11, 12 or 13 required)"
+elif [ "$debian_release" -eq 10 ] 2>/dev/null; then
+    echo "- Warning: Debian 10 is past its end of life; ImunifyAV runs on it, but updates may stop at any time"
 fi
 for f in "$REPO_DIR/bin/v-imav-malware-scan" "$REPO_DIR/func/imav.sh" "$DEFAULT_CONF" "$CRON_FILE" "$INTEGRATION_CONF" "$NOTIFY_PATH_UNIT" "$NOTIFY_SERVICE_UNIT"; do
     [ -f "$f" ] || fail "${f#$REPO_DIR/} not found, run this script from the repository clone"

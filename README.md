@@ -57,7 +57,7 @@ ImunifyAV scans asynchronously: the commands start a scan, wait for the agent to
 
 ## Installation
 
-Requirements: myVesta on Debian 11, 12 or 13, root access. `jq`, `curl` and `unzip` are installed by the installer if missing.
+Requirements: myVesta on Debian 11, 12 or 13 (Debian 10 works but is past its end of life), root access. `jq`, `curl` and `unzip` are installed by the installer if missing.
 
 ```bash
 cd /root && git clone https://github.com/isscbta/myvesta-imunify-antivirus.git && cd myvesta-imunify-antivirus && bash imav-install.sh
