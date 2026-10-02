@@ -1,0 +1,58 @@
+#!/bin/bash
+# info: delete a path from the ImunifyAV ignore list
+# options: PATH
+#
+# The function removes a file or directory from the ImunifyAV malware ignore
+# list. The path must be absolute.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+path=$1
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'PATH'
+imav_path_valid "$path" 'path'
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+output=$($IMAV_BIN malware ignore delete "$path" 2>&1)
+check_result $? "ImunifyAV could not delete $path from the ignore list: $output" $E_UPDATE
+echo "$path deleted from the ImunifyAV ignore list"
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+user=$(imav_user_from_path "$path")
+if [ -n "$user" ] && [ -d "$VESTA/data/users/$user" ]; then
+    log_history "deleted $path from the ImunifyAV ignore list"
+fi
+imav_log INFO "ignore list: deleted $path"
+log_event "$OK" "$ARGUMENTS"
+
+exit

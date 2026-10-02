@@ -1,0 +1,75 @@
+#!/bin/bash
+# info: list infected files known to ImunifyAV
+# options: [DOMAIN] [FORMAT]
+#
+# The function lists the files ImunifyAV currently considers infected, without
+# starting a new scan. With DOMAIN only the findings under the document root of
+# that domain are shown; without it, all findings on the server.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+format=${2-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+is_format_valid 'domain'
+imav_format_valid "$format"
+imav_require_agent
+if [ -n "$domain" ]; then
+    imav_domain_owner "$domain"
+    is_object_valid 'web' 'DOMAIN' "$domain"
+    imav_domain_docroot "$user" "$domain"
+fi
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+# Findings are filtered by path, not by --user: ImunifyAV attributes a file to
+# its owner (uid 0 for root-owned files), which would hide some findings.
+results=$(imav_all_results)
+imav_results_check "$results"
+if [ -n "$domain" ]; then
+    results=$(imav_results_filter_path "$results" "$docroot")
+fi
+results=$(imav_results_filter_active "$results")
+count=$(imav_results_count "$results")
+
+if [ "$format" = 'shell' ]; then
+    if [ "$count" -gt 0 ]; then
+        imav_results_to_shell "$results"
+        echo "======"
+        echo "$count infected file(s)."
+    else
+        echo "No infected files are known${domain:+ for $domain}."
+    fi
+else
+    imav_print_results "$format" "$results"
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

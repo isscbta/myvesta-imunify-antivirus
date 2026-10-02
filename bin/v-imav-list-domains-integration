@@ -1,0 +1,59 @@
+#!/bin/bash
+# info: list myVesta web domains in the ImunifyAV integration format
+# options: NONE
+#
+# Called by the ImunifyAV agent through the "domains" key of
+# /etc/sysconfig/imunify360/integration.conf. Prints the JSON document the
+# stand-alone integration expects: every web domain with its document root
+# and owner, built from /usr/local/vesta/data/users/*/web.conf.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+{
+    for conf in $VESTA/data/users/*/web.conf; do
+        [ -f "$conf" ] || continue
+        username=$(basename "$(dirname "$conf")")
+        first=1
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            DOMAIN=''
+            SSL_HOME=''
+            parse_object_kv_list_non_eval "$line"
+            [ -z "$DOMAIN" ] && continue
+            dir='public_html'
+            [ "$SSL_HOME" = 'single' ] && dir='public_shtml'
+            is_main='false'
+            [ $first -eq 1 ] && is_main='true'
+            first=0
+            jq -c -n \
+                --arg domain "$DOMAIN" \
+                --arg docroot "/home/$username/web/$DOMAIN/$dir/" \
+                --arg owner "$username" \
+                --argjson is_main "$is_main" \
+                '{($domain): {document_root: $docroot, is_main: $is_main, owner: $owner}}'
+        done < "$conf"
+    done
+} | jq -s '{data: (add // {}), metadata: {result: "ok"}}'
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

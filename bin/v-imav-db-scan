@@ -1,0 +1,116 @@
+#!/bin/bash
+# info: scan the WordPress database of a domain for injected malware
+# options: DOMAIN [FORMAT]
+#
+# The function exports suspicious rows of the WordPress tables (posts, options,
+# comments, postmeta) to files, has ImunifyAV scan them, and runs heuristic
+# checks for typical database injections (changed siteurl, missing active
+# plugins, recently created administrators, cron jobs and scripts pointing to
+# external hosts). The database is never modified.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+format=${2-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-db.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN [FORMAT]'
+is_format_valid 'domain'
+imav_format_valid "$format"
+imav_require_agent
+if ! command -v mysql >/dev/null 2>&1; then
+    check_result $E_DISABLED "mysql client is not installed"
+fi
+imav_domain_owner "$domain"
+is_object_valid 'web' 'DOMAIN' "$domain"
+imav_domain_docroot "$user" "$domain"
+if ! imav_db_credentials "$domain"; then
+    check_result $E_DB "database credentials for $domain could not be read (not a WordPress site?)"
+fi
+db_error=$(IMAV_DB_VERBOSE=1 imav_db_query 'SELECT 1' 2>&1 >/dev/null)
+if [ -n "$db_error" ]; then
+    check_result $E_DB "could not connect to database $IMAV_DB_NAME on $IMAV_DB_HOST as $IMAV_DB_USER: $db_error"
+fi
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+export_dir="$IMAV_DATA/dbscan/$domain"
+
+if [ "$format" = 'shell' ]; then
+    echo "Starting database scan for $domain (database $IMAV_DB_NAME, prefix $IMAV_DB_PREFIX)"
+fi
+
+exported=$(imav_db_export "$export_dir")
+oversized=$(imav_db_oversized "$export_dir" | grep -c .)
+findings=''
+
+if [ "$exported" -gt 0 ]; then
+    if [ "$format" = 'shell' ]; then
+        echo "$exported row(s) with text content exported, scanning them with ImunifyAV"
+        [ "$oversized" -gt 0 ] && echo "$oversized row(s) larger than 1 MB cannot be checked by signatures: $(imav_db_oversized "$export_dir" | head -n 5 | paste -sd, -)"
+    fi
+    imav_start_scan "$export_dir" \
+        --intensity-cpu "$SCAN_INTENSITY_CPU" --intensity-io "$SCAN_INTENSITY_IO"
+    imav_wait_scan "$scan_id"
+    results=$(imav_scan_results "$scan_id")
+    imav_results_check "$results"
+    findings=$(imav_db_map_findings "$export_dir" "$results")
+    imav_db_forget_findings "$export_dir" "$results"
+fi
+
+heuristics=$(imav_db_heuristics "$domain" "$docroot" "$export_dir")
+findings=$(printf '%s\n%s\n' "$findings" "$heuristics" | grep -v '^$')
+count=$(echo "$findings" | grep -c .)
+
+rm -rf "$export_dir" "$export_dir.oversized"
+
+report=$(imav_write_report "$user" "$domain" 'imav-db-scan' "$(echo "$findings" | imav_db_print csv)")
+
+if [ "$format" = 'shell' ]; then
+    if [ "$count" -gt 0 ]; then
+        echo "=== Database findings for $domain ==="
+        echo "$findings" | imav_db_print shell
+        echo "======"
+        echo "$count finding(s). The list is saved at: $report"
+        echo "Rows are identified by table and primary key; review them before changing the database."
+    else
+        echo "No database injections were found for $domain ($exported row(s) checked by ImunifyAV, heuristics clean)."
+    fi
+else
+    echo "$findings" | imav_db_print "$format"
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+log_history "database scan of $domain: $count findings"
+log_event "$OK" "$ARGUMENTS"
+
+exit

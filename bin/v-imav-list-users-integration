@@ -1,0 +1,55 @@
+#!/bin/bash
+# info: list myVesta users in the ImunifyAV integration format
+# options: NONE
+#
+# Called by the ImunifyAV agent through the "users" key of
+# /etc/sysconfig/imunify360/integration.conf. Prints the JSON document the
+# stand-alone integration expects, built from /usr/local/vesta/data/users.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+{
+    for conf in $VESTA/data/users/*/user.conf; do
+        [ -f "$conf" ] || continue
+        username=$(basename "$(dirname "$conf")")
+        uid=$(id -u "$username" 2>/dev/null) || continue
+        CONTACT=''
+        PACKAGE=''
+        parse_object_kv_list_non_eval "$(cat "$conf")"
+        main_domain=$(grep -m1 -o "DOMAIN='[^']*'" "$VESTA/data/users/$username/web.conf" 2>/dev/null | cut -d "'" -f 2)
+        jq -c -n \
+            --argjson id "$uid" \
+            --arg username "$username" \
+            --arg domain "$main_domain" \
+            --arg package "${PACKAGE:-default}" \
+            --arg email "$CONTACT" \
+            '{id: $id, username: $username, owner: "root",
+              domain: (if $domain == "" then null else $domain end),
+              package: {name: $package, owner: "root"},
+              email: (if $email == "" then null else $email end),
+              locale_code: "EN_us"}'
+    done
+} | jq -s '{data: ., metadata: {result: "ok"}}'
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

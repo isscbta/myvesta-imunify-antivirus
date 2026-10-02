@@ -1,0 +1,61 @@
+#!/bin/bash
+# info: add a path to the ImunifyAV ignore list
+# options: PATH
+#
+# The function adds a file or directory to the ImunifyAV malware ignore list,
+# for example a false positive. The path must be absolute.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+path=$1
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'PATH'
+imav_path_valid "$path" 'path'
+if [ ! -e "$path" ]; then
+    check_result $E_NOTEXIST "path $path doesn't exist"
+fi
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+output=$($IMAV_BIN malware ignore add "$path" 2>&1)
+check_result $? "ImunifyAV could not add $path to the ignore list: $output" $E_UPDATE
+echo "$path added to the ImunifyAV ignore list"
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+user=$(imav_user_from_path "$path")
+if [ -n "$user" ] && [ -d "$VESTA/data/users/$user" ]; then
+    log_history "added $path to the ImunifyAV ignore list"
+fi
+imav_log INFO "ignore list: added $path"
+log_event "$OK" "$ARGUMENTS"
+
+exit

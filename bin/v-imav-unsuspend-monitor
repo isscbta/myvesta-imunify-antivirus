@@ -1,0 +1,58 @@
+#!/bin/bash
+# info: resume the scheduled security report of a domain
+# options: DOMAIN
+#
+# The function resumes the scheduled reports of a domain suspended with
+# v-imav-suspend-monitor.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN'
+is_format_valid 'domain'
+imav_monitor_init
+if ! imav_monitor_exists "$domain"; then
+    check_result $E_NOTEXIST "monitor for $domain doesn't exist"
+fi
+user=$(imav_monitor_get "$domain" | grep -o "USER='[^']*'" | cut -d "'" -f 2)
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_monitor_set "$domain" 'SUSPENDED' 'no'
+echo "Security report monitor for $domain resumed."
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+[ -d "$VESTA/data/users/$user" ] && log_history "resumed security report monitor for $domain"
+log_event "$OK" "$ARGUMENTS"
+
+exit

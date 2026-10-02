@@ -1,0 +1,9 @@
+[Unit]
+Description=myvesta-imunify-antivirus: watch the notification spool
+
+[Path]
+DirectoryNotEmpty=/var/spool/myvesta-imav
+Unit=myvesta-imav-notify.service
+
+[Install]
+WantedBy=multi-user.target

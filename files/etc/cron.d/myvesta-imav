@@ -1,0 +1,13 @@
+# myvesta-imunify-antivirus: nightly on-demand scan of the whole /home.
+#
+# Free ImunifyAV has a built-in background scan only monthly, so the daily
+# scan is run from here. RapidScan skips unchanged files.
+#
+# Installed to /etc/cron.d/myvesta-imav by imav-install.sh.
+# Notifications on findings are sent by the hook, not by this command.
+
+SHELL=/bin/bash
+VESTA=/usr/local/vesta
+PATH=/usr/local/vesta/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+0 3 * * * root /usr/local/vesta/bin/v-imav-scan-all >/dev/null 2>&1

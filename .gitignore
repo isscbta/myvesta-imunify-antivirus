@@ -1,0 +1,10 @@
+# Archives and cache
+*.tar
+*.tar.gz
+*.zip
+*.gz
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store

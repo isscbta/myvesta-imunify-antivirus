@@ -1,0 +1,78 @@
+#!/bin/bash
+# info: add a domain to the scheduled security reports
+# options: DOMAIN [EMAIL] [HOUR]
+#
+# The function registers a domain for a daily security report
+# (v-imav-report-domain) sent at HOUR (0-23, default 9) to REPORT_EMAIL from
+# imav.conf plus the EMAIL addresses given here (comma separated). The first
+# registration installs the hourly cron job /etc/cron.d/myvesta-imav-monitor
+# that runs v-imav-run-monitors.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+emails=$2
+hour=${3-9}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN [EMAIL] [HOUR]'
+is_format_valid 'domain'
+for email in ${emails//,/ }; do
+    is_email_format_valid "$email"
+done
+is_int_format_valid "$hour" 'hour'
+if [ "$hour" -gt 23 ]; then
+    check_result $E_INVALID "invalid hour format :: $hour (0-23)"
+fi
+imav_domain_owner "$domain"
+is_object_valid 'web' 'DOMAIN' "$domain"
+imav_ensure_dirs
+imav_monitor_init
+if imav_monitor_exists "$domain"; then
+    check_result $E_EXISTS "monitor for $domain already exists"
+fi
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+emails=$(echo "$emails" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -v '^$' | awk '!seen[$0]++' | paste -sd, -)
+imav_monitor_add "$domain" "$user" "$emails" "$hour"
+imav_monitor_ensure_cron
+
+echo "Daily security report for $domain scheduled at $(printf '%02d' "$hour"):00."
+echo "Recipients: ${REPORT_EMAIL:-(REPORT_EMAIL not set)}${emails:+, $emails}"
+echo "Run it now with: v-imav-report-domain $domain"
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+log_history "added security report monitor for $domain (hour $hour, emails ${emails:-none})"
+imav_log INFO "monitor added for $domain (hour $hour, emails ${emails:-none})"
+log_event "$OK" "$ARGUMENTS"
+
+exit

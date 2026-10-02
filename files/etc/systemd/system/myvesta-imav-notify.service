@@ -1,0 +1,7 @@
+[Unit]
+Description=myvesta-imunify-antivirus: send queued notifications
+
+[Service]
+Type=oneshot
+Environment=VESTA=/usr/local/vesta
+ExecStart=/usr/local/vesta/bin/v-imav-notify-send

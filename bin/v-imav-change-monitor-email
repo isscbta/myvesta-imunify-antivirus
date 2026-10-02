@@ -1,0 +1,70 @@
+#!/bin/bash
+# info: change the recipients of a domain's scheduled security report
+# options: DOMAIN EMAIL [HOUR]
+#
+# The function replaces the extra recipients (comma separated; an empty
+# string keeps only REPORT_EMAIL) and optionally the hour of the scheduled
+# report of a monitored domain.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+emails=$2
+hour=$3
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '2' "$#" 'DOMAIN EMAIL [HOUR]'
+is_format_valid 'domain'
+for email in ${emails//,/ }; do
+    is_email_format_valid "$email"
+done
+if [ -n "$hour" ]; then
+    is_int_format_valid "$hour" 'hour'
+    [ "$hour" -gt 23 ] && check_result $E_INVALID "invalid hour format :: $hour (0-23)"
+fi
+imav_monitor_init
+if ! imav_monitor_exists "$domain"; then
+    check_result $E_NOTEXIST "monitor for $domain doesn't exist"
+fi
+user=$(imav_monitor_get "$domain" | grep -o "USER='[^']*'" | cut -d "'" -f 2)
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+emails=$(echo "$emails" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -v '^$' | awk '!seen[$0]++' | paste -sd, -)
+imav_monitor_set "$domain" 'EMAIL' "$emails"
+[ -n "$hour" ] && imav_monitor_set "$domain" 'HOUR' "$hour"
+echo "Security report monitor for $domain updated: recipients ${REPORT_EMAIL:-(REPORT_EMAIL not set)}${emails:+, $emails}${hour:+, hour $hour}."
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+[ -d "$VESTA/data/users/$user" ] && log_history "changed security report monitor for $domain (emails ${emails:-none}${hour:+, hour $hour})"
+log_event "$OK" "$ARGUMENTS"
+
+exit

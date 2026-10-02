@@ -1,0 +1,69 @@
+#!/bin/bash
+# info: list the ImunifyAV ignore list
+# options: [FORMAT]
+#
+# The function shows the paths ImunifyAV skips during malware scans.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+format=${1-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+imav_format_valid "$format"
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+# JSON SHAPE (measured on 8.8.6): {"max_count": N, "items": [{"id": 1,
+#   "path": "/proc", "resource_type": "file", "added_date": 1790432798}]}
+# A fresh installation already ignores /proc, /sys and the CageFS skeleton.
+entries=$($IMAV_BIN malware ignore list --limit 10000 --json 2>/dev/null \
+    | jq -c 'if type == "array" then . else (.items // []) end' 2>/dev/null)
+[ -z "$entries" ] && entries='[]'
+
+case $format in
+    json)  echo "$entries" | jq '.' ;;
+    csv)   echo 'id,path,added'
+           echo "$entries" | jq -r '.[] | [((.id // "") | tostring), (.path // ""), ((.added_date // .created // "") | tostring)] | @csv' ;;
+    plain) echo "$entries" | jq -r '.[] | .path // empty' ;;
+    shell)
+        if [ "$(echo "$entries" | jq 'length')" -gt 0 ]; then
+            {
+                echo "ID|PATH|ADDED"
+                echo "--|----|-----"
+                echo "$entries" | jq -r '.[] | "\(.id // "")|\(.path // "")|\((.added_date // .created // 0) | todate)"'
+            } | column -t -s '|'
+        else
+            echo "The ImunifyAV ignore list is empty."
+        fi
+        ;;
+esac
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

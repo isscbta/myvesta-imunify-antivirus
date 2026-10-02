@@ -1,0 +1,55 @@
+#!/bin/bash
+# info: ImunifyAV event hook that queues the event for v-imav-notify-send
+# options: NONE (event JSON on stdin)
+#
+# Registered with "imunify-antivirus notifications-config" for the events
+# CUSTOM_SCAN_MALWARE_FOUND and USER_SCAN_MALWARE_FOUND. ImunifyAV runs it as
+# the unprivileged _imunify user, which must not be able to read anything in
+# /usr/local/vesta/conf. The hook therefore only writes the event JSON into
+# the spool directory; the systemd path unit myvesta-imav-notify.path then
+# runs v-imav-notify-send as root, which reads imav.conf and delivers the
+# notification. The exit code is always 0 so that ImunifyAV does not mark the
+# event as failed; problems are logged to syslog.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+SPOOL='/var/spool/myvesta-imav'
+
+hook_log() {
+    logger -t v-imav-notify-hook "$1" 2>/dev/null
+}
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+data=$(cat)
+if [ -z "$data" ]; then
+    hook_log "no event data on stdin"
+    exit 0
+fi
+if command -v jq >/dev/null 2>&1 && ! echo "$data" | jq -e . >/dev/null 2>&1; then
+    hook_log "event data is not valid JSON, ignored"
+    exit 0
+fi
+
+if [ ! -d "$SPOOL" ] || [ ! -w "$SPOOL" ]; then
+    hook_log "spool directory $SPOOL is missing or not writable by $(id -un)"
+    exit 0
+fi
+
+tmp=$(mktemp "$SPOOL/.event-XXXXXX.tmp" 2>/dev/null)
+if [ -z "$tmp" ]; then
+    hook_log "could not create a spool file in $SPOOL"
+    exit 0
+fi
+printf '%s\n' "$data" > "$tmp"
+chmod 640 "$tmp"
+mv -f "$tmp" "$SPOOL/event-$(date +%s%N)-$$.json"
+hook_log "event queued in $SPOOL"
+
+exit 0

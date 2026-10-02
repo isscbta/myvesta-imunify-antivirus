@@ -1,0 +1,118 @@
+#!/bin/bash
+# info: scan all user home directories for malware with ImunifyAV
+# options: [WAIT] [FORMAT]
+#
+# The function starts an ImunifyAV on-demand scan of /home. With WAIT "yes"
+# (default) it waits for the scan and prints a summary per user and domain;
+# with WAIT "no" it only starts the scan and exits. Meant for the nightly cron
+# job; notifications on findings are sent by the ImunifyAV hook.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+wait=${1-yes}
+format=${2-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+is_boolean_format_valid "$wait" 'wait'
+imav_format_valid "$format"
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+
+if [ "$format" = 'shell' ]; then
+    echo "Starting ImunifyAV malware scan of $HOMEDIR"
+fi
+
+imav_start_scan "$HOMEDIR" \
+    --intensity-cpu "$SCAN_INTENSITY_CPU" --intensity-io "$SCAN_INTENSITY_IO"
+
+if [ "$wait" = 'no' ]; then
+    if [ "$format" = 'shell' ]; then
+        echo "Scan $scan_id started. Check it later with: v-imav-list-infected"
+    else
+        echo "{\"scan_id\": \"$scan_id\"}"
+    fi
+    log_event "$OK" "$ARGUMENTS"
+    exit
+fi
+
+imav_wait_scan "$scan_id" 0
+results=$(imav_scan_results "$scan_id")
+imav_results_check "$results"
+count=$(imav_results_count "$results")
+
+stamp=$(date +%Y%m%d-%H%M%S)
+report_dir="$REPORT_HISTORY_DIR/_all"
+mkdir -p "$report_dir"
+report="$report_dir/scan-all-$stamp.csv"
+imav_results_to_csv "$results" > "$report"
+find "$report_dir" -type f -name 'scan-all-*.csv' -mtime +"$REPORT_KEEP_DAYS" -delete 2>/dev/null
+
+# Summary per user and domain
+summary=$(imav_results_files "$results" \
+    | sed -n 's|^/home/\([^/]*\)/web/\([^/]*\)/.*|\1\t\2|p; s|^/home/\([^/]*\)/[^w].*|\1\t-|p' \
+    | sort | uniq -c | awk '{print $2"\t"$3"\t"$1}')
+
+case $format in
+    json)
+        echo "$summary" | jq -R -s -c '
+            split("\n") | map(select(length > 0) | split("\t")) |
+            map({user: .[0], domain: .[1], infected: (.[2] | tonumber)})' | jq '.'
+        ;;
+    csv)
+        echo 'user,domain,infected'
+        echo "$summary" | grep -v '^$' | jq -R -r 'split("\t") | @csv'
+        ;;
+    plain)
+        echo "$summary"
+        ;;
+    shell)
+        if [ "$count" -gt 0 ]; then
+            echo "=== Infected files per domain ==="
+            {
+                echo "USER|DOMAIN|INFECTED"
+                echo "----|------|--------"
+                echo "$summary" | tr '\t' '|'
+            } | column -t -s '|'
+            echo "======"
+            echo "$count infected file(s) in total. The full list is saved at: $report"
+        else
+            echo "No infected files were found under $HOMEDIR."
+        fi
+        ;;
+esac
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+imav_log INFO "scan of $HOMEDIR finished: $count infected files (scan $scan_id)"
+log_event "$OK" "$ARGUMENTS"
+
+exit

@@ -1,0 +1,173 @@
+#!/bin/bash
+# info: scan a path for malware with ImunifyAV
+# options: PATH [MINUTES] [ALL_EXTENSIONS] [FORMAT]
+#
+# The function scans an arbitrary path (a glob is allowed) with ImunifyAV.
+# With MINUTES greater than 0 only files changed in the last MINUTES minutes
+# are scanned, limited to web extensions unless ALL_EXTENSIONS is "yes".
+# The environment variables cmin=-N, chour=-N, cday=-N (change window),
+# all=1 (all extensions) and SCANPATH (glob to scan while PATH remains the
+# report location) are honoured as well, for use in existing cron jobs.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+path=$1
+minutes=${2-0}
+all_extensions=${3-no}
+format=${4-shell}
+
+# Compatibility with the environment variables of the old command
+if [ -n "$cday" ]; then
+    minutes=$(( ${cday#-} * 1440 ))
+fi
+if [ -n "$chour" ]; then
+    minutes=$(( ${chour#-} * 60 ))
+fi
+if [ -n "$cmin" ]; then
+    minutes=${cmin#-}
+fi
+if [ -n "$all" ]; then
+    all_extensions='yes'
+fi
+scanpath=${SCANPATH:-$path}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+# Wait for a list of scan ids and collect their findings
+collect_scans() {
+    local id dir n=0
+    dir=$(mktemp -d)
+    for id in "$@"; do
+        imav_wait_scan "$id"
+        imav_scan_results "$id" > "$dir/$(printf '%04d' $n).json"
+        imav_results_check "$(cat "$dir/$(printf '%04d' $n).json")"
+        n=$((n + 1))
+    done
+    results=$(imav_results_concat "$dir"/*.json)
+    rm -rf "$dir"
+}
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'PATH [MINUTES] [ALL_EXTENSIONS] [FORMAT]'
+imav_path_valid "$path" 'path'
+if [ ! -d "$path" ]; then
+    check_result $E_NOTEXIST "path $path doesn't exist"
+fi
+is_number_format_valid "$minutes" 'minutes'
+is_boolean_format_valid "$all_extensions" 'all_extensions'
+imav_format_valid "$format"
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+scan_ids=''
+
+if [ "$minutes" -gt 0 ]; then
+    if [ "$format" = 'shell' ]; then
+        echo "Starting ImunifyAV malware scan of files changed in the last $minutes minutes under $scanpath"
+    fi
+
+    # Build the find expression for web extensions
+    name_args=()
+    if [ "$all_extensions" != 'yes' ]; then
+        name_args=( '(' )
+        for ext in $IMAV_SCAN_EXTENSIONS; do
+            name_args+=( -name "*.$ext" -o )
+        done
+        unset 'name_args[${#name_args[@]}-1]'
+        name_args+=( ')' )
+    fi
+
+    before=$(imav_ondemand_list_json | imav_ondemand_list_ids | sort -u)
+    batch=()
+    total=0
+    IMAV_QUEUE_ARGS="--intensity-cpu $SCAN_INTENSITY_CPU --intensity-io $SCAN_INTENSITY_IO"
+    while IFS= read -r -d '' file; do
+        batch+=( "$file" )
+        ((total++))
+        if [ ${#batch[@]} -ge 200 ]; then
+            imav_queue_paths "${batch[@]}" || check_result $E_UPDATE "ImunifyAV could not queue the files"
+            batch=()
+        fi
+    done < <(find $scanpath -type f -cmin "-$minutes" "${name_args[@]}" -print0 2>/dev/null)
+    if [ ${#batch[@]} -gt 0 ]; then
+        imav_queue_paths "${batch[@]}" || check_result $E_UPDATE "ImunifyAV could not queue the files"
+    fi
+
+    if [ "$total" -eq 0 ]; then
+        if [ "$format" = 'shell' ]; then
+            echo "No files changed in the last $minutes minutes under $scanpath."
+        else
+            imav_print_results "$format" '[]'
+        fi
+        log_event "$OK" "$ARGUMENTS"
+        exit
+    fi
+
+    sleep 2
+    after=$(imav_ondemand_list_json | imav_ondemand_list_ids | sort -u)
+    scan_ids=$(comm -13 <(echo "$before") <(echo "$after"))
+    if [ -z "$scan_ids" ]; then
+        check_result $E_UPDATE "files were queued but no scan id could be determined"
+    fi
+    collect_scans $scan_ids
+else
+    if [ "$format" = 'shell' ]; then
+        echo "Starting ImunifyAV malware scan at $scanpath"
+    fi
+    imav_start_scan "$scanpath" \
+        --intensity-cpu "$SCAN_INTENSITY_CPU" --intensity-io "$SCAN_INTENSITY_IO"
+    scan_ids=$scan_id
+    collect_scans $scan_ids
+fi
+
+count=$(imav_results_count "$results")
+report_dir="$REPORT_HISTORY_DIR/_paths"
+mkdir -p "$report_dir"
+report="$report_dir/$(echo "$path" | sed 's|[^A-Za-z0-9._-]|_|g')-$(date +%Y%m%d-%H%M%S).csv"
+imav_results_to_csv "$results" > "$report"
+
+if [ "$format" = 'shell' ]; then
+    if [ "$count" -gt 0 ]; then
+        echo "=== Infected files found in $scanpath ==="
+        imav_results_to_shell "$results"
+        echo "======"
+        echo "$count infected file(s). The list is saved at: $report"
+    else
+        echo "No infected files were found in $scanpath."
+    fi
+else
+    imav_print_results "$format" "$results"
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+imav_log INFO "scan of $scanpath (minutes=$minutes): $count infected files"
+log_event "$OK" "$ARGUMENTS"
+
+exit

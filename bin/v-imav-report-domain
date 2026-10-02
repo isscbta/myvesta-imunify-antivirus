@@ -1,0 +1,137 @@
+#!/bin/bash
+# info: build and send the security report of a domain
+# options: DOMAIN [EMAIL] [SEND]
+#
+# The function runs the full security check of a domain (ImunifyAV malware
+# scan, known vulnerabilities, database scan, core and plugin integrity,
+# available updates, PHP files in unexpected places, web-reachable backups,
+# .htaccess directives, the site seen from outside, administrators, plugins,
+# cron tasks, outgoing mail, PHP version, hidden files, size trends, root PHP
+# files and recently modified files), saves the report as text and HTML in the
+# domain's private directory and in the report history, prints the text
+# version, and emails it. Recipients are REPORT_EMAIL from imav.conf, the
+# addresses stored with v-imav-add-monitor, and EMAIL (comma separated).
+# SEND "no" only builds and saves the report.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+emails=$2
+send=${3-yes}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-vuln.sh
+source $VESTA/func/imav-db.sh
+source $VESTA/func/imav-heuristic.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/func/imav-mail.sh
+source $VESTA/func/imav-report.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN [EMAIL] [SEND]'
+is_format_valid 'domain'
+is_boolean_format_valid "$send" 'send'
+for email in ${emails//,/ }; do
+    is_email_format_valid "$email"
+done
+imav_require_agent
+imav_domain_owner "$domain"
+is_object_valid 'web' 'DOMAIN' "$domain"
+imav_domain_docroot "$user" "$domain"
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+imav_monitor_init
+
+# Recipients: default, registry, argument
+recipients="$REPORT_EMAIL"
+monitor_line=$(imav_monitor_get "$domain")
+if [ -n "$monitor_line" ]; then
+    EMAIL=''
+    USER_SAVE=$user
+    parse_object_kv_list_non_eval "$monitor_line"
+    user=$USER_SAVE
+    recipients="$recipients,$EMAIL"
+fi
+recipients="$recipients,$emails"
+recipients=$(echo "$recipients" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -v '^$' | awk '!seen[$0]++' | paste -sd, -)
+
+imav_log INFO "security report of $domain started"
+imav_report_begin
+imav_report_run_checks
+overall=$(imav_report_overall_level)
+
+stamp=$(date +%Y%m%d-%H%M%S)
+history="$REPORT_HISTORY_DIR/$domain"
+mkdir -p "$history"
+text_file="$history/report-$stamp.txt"
+html_file="$history/report-$stamp.html"
+imav_report_render_text "$overall" > "$text_file"
+imav_report_render_html "$overall" > "$html_file"
+find "$history" -type f -name 'report-*' -mtime +"$REPORT_KEEP_DAYS" -delete 2>/dev/null
+if [ "$REPORT_IN_DOMAIN_DIR" != 'none' ]; then
+    private_dir=$(imav_domain_private_dir "$user" "$domain")
+    mkdir -p "$private_dir"
+    cp -f "$html_file" "$private_dir/imav-report.html"
+    cp -f "$text_file" "$private_dir/imav-report.txt"
+    chown "$user:$user" "$private_dir/imav-report.html" "$private_dir/imav-report.txt"
+    chmod 640 "$private_dir/imav-report.html" "$private_dir/imav-report.txt"
+fi
+imav_report_end
+
+cat "$text_file"
+
+sent_to=''
+if [ "$send" = 'yes' ]; then
+    if [ -z "$recipients" ]; then
+        echo
+        echo "Warning: no recipients (set REPORT_EMAIL in $VESTA/conf/imav.conf or pass EMAIL); report saved only."
+    else
+        subject="[$(hostname -f 2>/dev/null || hostname)][$overall] Security report for $domain [$(date +'%F %H:%M')]"
+        if imav_mail_send "$recipients" "$subject" "$text_file" "$html_file"; then
+            sent_to=$recipients
+            echo
+            echo "Report sent to $recipients via $MAIL_TRANSPORT."
+        else
+            echo
+            echo "Error: the report could not be sent to $recipients: $IMAV_MAIL_ERROR"
+            echo "The report is saved at $html_file"
+            log_history "security report of $domain: $overall, sending to $recipients failed"
+            check_result $E_CONNECT "report mail failed: $IMAV_MAIL_ERROR"
+        fi
+    fi
+fi
+echo "Saved: $html_file"
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+imav_log INFO "security report of $domain finished: $overall${sent_to:+, sent to $sent_to}"
+log_history "security report of $domain: $overall${sent_to:+, sent to $sent_to}"
+log_event "$OK" "$ARGUMENTS"
+
+exit

@@ -1,0 +1,138 @@
+#!/bin/bash
+# info: send queued ImunifyAV notifications by email and Telegram
+# options: NONE
+#
+# Started as root by the systemd path unit myvesta-imav-notify.path whenever
+# v-imav-notify-hook puts an event into /var/spool/myvesta-imav. Reads the
+# alert settings from /usr/local/vesta/conf/imav.conf (ALERT_EMAIL,
+# ALERT_PREFIX, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID), sends one message per
+# event and removes the spool file. Delivery failures are logged; the spool
+# file is removed in every case so that the path unit does not loop.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+SPOOL='/var/spool/myvesta-imav'
+MAX_FILES=30
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-mail.sh
+source $VESTA/conf/imav.conf
+
+send_log() {
+    logger -t v-imav-notify-send "$1" 2>/dev/null
+    imav_log INFO "$1"
+}
+
+send_telegram() {
+    curl -sS -m 20 -o /dev/null -w '%{http_code}' \
+        --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+        --data-urlencode "text=$1" \
+        --data-urlencode 'disable_web_page_preview=true' \
+        "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" 2>/dev/null
+}
+
+# Email through the transport configured in imav.conf (sendmail or Mailgun)
+# $1 = subject, $2 = body
+send_email() {
+    local body_file rc
+    body_file=$(mktemp)
+    printf '%s\n' "$2" > "$body_file"
+    imav_mail_send "$ALERT_EMAIL" "$1" "$body_file"
+    rc=$?
+    rm -f "$body_file"
+    [ $rc -ne 0 ] && send_log "email failed: $IMAV_MAIL_ERROR"
+    return $rc
+}
+
+# Build and deliver the notification for one event file
+# $1 = spool file
+process_event() {
+    local file="$1" data event scan_id started total files when shown more subject message code sent='' failed=''
+
+    data=$(cat "$file")
+    event=$(echo "$data" | jq -r '.event_id // .event // "unknown"' 2>/dev/null)
+    case $event in
+        CUSTOM_SCAN_MALWARE_FOUND|USER_SCAN_MALWARE_FOUND|malware-detected) ;;
+        *)
+            send_log "event $event ignored"
+            return 0
+            ;;
+    esac
+
+    # JSON SHAPE: notifications-config payload (event_id, scan_id, started,
+    # total_malicious, malicious_files[]) or the older hook payload (files[].file)
+    scan_id=$(echo "$data" | jq -r '.scan_id // ""')
+    started=$(echo "$data" | jq -r '.started // ""')
+    total=$(echo "$data" | jq -r '.total_malicious // (.malicious_files | length?) // (.files | length?) // 0')
+    files=$(echo "$data" | jq -r '
+        (.malicious_files // .files // [])
+        | .[] | if type == "object" then "\(.file // "")  \(.type // "")" else . end' 2>/dev/null \
+        | sed -E "s#^$IMAV_DATA/dbscan/([^/]+)/([^/ ]+)\.(php|html)#database row of \1: \2#")
+
+    when=''
+    if [[ "$started" =~ ^[0-9]+ ]]; then
+        when=$(date -d "@${started%%.*}" +'%F %T' 2>/dev/null)
+    fi
+    shown=$(echo "$files" | grep -v '^$' | head -n $MAX_FILES)
+    more=$(( $(echo "$files" | grep -c .) - MAX_FILES ))
+
+    subject="[$ALERT_PREFIX] ImunifyAV: $total infected file(s) found"
+    message="ImunifyAV found $total infected file(s) on $ALERT_PREFIX"
+    [ -n "$when" ] && message="$message (scan started $when)"
+    [ -n "$scan_id" ] && message="$message, scan $scan_id"
+    message="$message"$'\n'"Event: $event"$'\n\n'"$shown"
+    if [ "$more" -gt 0 ]; then
+        message="$message"$'\n'"... and $more more"
+    fi
+    message="$message"$'\n\n'"Details: v-imav-list-infected"
+
+    if [ -n "$ALERT_EMAIL" ]; then
+        if send_email "$subject" "$message"; then
+            sent="$sent email($ALERT_EMAIL)"
+        else
+            failed="$failed email($ALERT_EMAIL)"
+        fi
+    fi
+    if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+        code=$(send_telegram "$message")
+        if [ "$code" = '200' ]; then
+            sent="$sent telegram"
+        else
+            failed="$failed telegram(HTTP $code)"
+        fi
+    fi
+
+    if [ -z "$sent$failed" ]; then
+        send_log "event $event with $total files: no notification channel configured in $VESTA/conf/imav.conf"
+    else
+        send_log "event $event with $total files: sent${sent:-  none}${failed:+, failed$failed}"
+    fi
+}
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+[ -z "$ALERT_PREFIX" ] && ALERT_PREFIX=$(hostname -f 2>/dev/null || hostname)
+
+# Unfinished spool files older than five minutes are leftovers of a crashed hook
+find "$SPOOL" -maxdepth 1 -name '.event-*.tmp' -mmin +5 -delete 2>/dev/null
+
+for f in "$SPOOL"/event-*.json; do
+    [ -f "$f" ] || continue
+    process_event "$f"
+    rm -f "$f"
+done
+
+exit 0

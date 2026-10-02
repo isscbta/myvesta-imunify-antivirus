@@ -1,0 +1,61 @@
+#!/bin/bash
+# info: remove a domain from the scheduled security reports
+# options: DOMAIN
+#
+# The function removes the domain from the monitor registry. Reports already
+# saved and the trend state of the domain are kept.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN'
+is_format_valid 'domain'
+imav_monitor_init
+if ! imav_monitor_exists "$domain"; then
+    check_result $E_NOTEXIST "monitor for $domain doesn't exist"
+fi
+user=$(imav_monitor_get "$domain" | grep -o "USER='[^']*'" | cut -d "'" -f 2)
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_monitor_delete "$domain"
+echo "Security report monitor for $domain removed."
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+if [ -n "$user" ] && [ -d "$VESTA/data/users/$user" ]; then
+    log_history "deleted security report monitor for $domain"
+fi
+imav_log INFO "monitor deleted for $domain"
+log_event "$OK" "$ARGUMENTS"
+
+exit

@@ -1,0 +1,120 @@
+#!/bin/bash
+# info: restore or quarantine the infected files of a domain
+# options: DOMAIN [MODE] [SCAN_ID]
+#
+# The function takes the files ImunifyAV reports as infected under the document
+# root of the domain and, for WordPress core, wordpress.org plugin and theme
+# files, replaces them with the original file of the installed version
+# downloaded from wordpress.org. All other files are moved to quarantine.
+# A tar.gz of the affected files is made before any change; nothing is deleted.
+# MODE is "auto" (default), "dry-run" (print the plan only) or "quarantine"
+# (quarantine everything without downloads). With SCAN_ID only the findings of
+# that scan are handled. If an ImunifyAV+ license is active, the built-in
+# cleanup is tried first.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+mode=${2-auto}
+scan_id=$3
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-remediate.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN [MODE] [SCAN_ID]'
+is_format_valid 'domain'
+case $mode in
+    auto|dry-run|quarantine) ;;
+    *) check_result $E_INVALID "invalid mode :: $mode (use auto, dry-run or quarantine)" ;;
+esac
+if [ -n "$scan_id" ] && ! [[ "$scan_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    check_result $E_INVALID "invalid scan id format :: $scan_id"
+fi
+imav_require_agent
+if ! command -v unzip >/dev/null 2>&1; then
+    check_result $E_DISABLED "unzip is not installed"
+fi
+imav_domain_owner "$domain"
+is_object_valid 'web' 'DOMAIN' "$domain"
+imav_domain_docroot "$user" "$domain"
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+
+# All findings are read and filtered by path: ImunifyAV attributes a file to
+# its owner, so findings on root-owned files would be missed with --user.
+if [ -n "$scan_id" ]; then
+    results=$(imav_scan_results "$scan_id")
+else
+    results=$(imav_all_results)
+fi
+imav_results_check "$results"
+results=$(imav_results_filter_path "$results" "$docroot")
+results=$(imav_results_filter_active "$results")
+count=$(imav_results_count "$results")
+
+if [ "$count" -eq 0 ]; then
+    echo "No infected files are known for $domain. Run v-imav-malware-scan $domain first."
+    log_event "$OK" "$ARGUMENTS"
+    exit
+fi
+
+echo "Starting remediation for $domain at $docroot ($count file(s), mode $mode)"
+if [ "$mode" != 'quarantine' ] && imav_is_wordpress "$docroot" && [ -z "$(imav_wp_version "$docroot")" ]; then
+    echo "Warning: wp-includes/version.php is missing, the WordPress version is unknown. Core files cannot be restored from the official archive and are quarantined instead; restore the core from the archive of the version the site was running afterwards."
+fi
+output=$(imav_remediate_run "$user" "$domain" "$docroot" "$mode" "$results")
+if echo "$output" | grep -q '^Error:'; then
+    echo "$output" | grep '^Error:'
+    check_result $E_DISK "remediation of $domain aborted before any change"
+fi
+echo "$output" | column -t -s ','
+
+replaced=$(echo "$output" | grep -c ',replace,.*,replaced')
+quarantined=$(echo "$output" | grep -c ',quarantine,.*,moved')
+cleaned=$(echo "$output" | grep -c ',cleanup,')
+failed=$(echo "$output" | grep -c ',failed$')
+
+if [ "$mode" = 'dry-run' ]; then
+    echo "Dry run, nothing was changed."
+else
+    report=$(imav_write_report "$user" "$domain" 'imav-remediate' "$output")
+    echo "Remediation completed: $replaced replaced, $quarantined quarantined, $cleaned cleaned by ImunifyAV+, $failed failed."
+    echo "Backups are in $BACKUP_DIR/$domain/, quarantine in $QUARANTINE_DIR/$domain/. Report: $report"
+    echo "Run v-imav-malware-scan $domain to confirm the result."
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+if [ "$mode" != 'dry-run' ]; then
+    log_history "remediation of $domain: $replaced replaced, $quarantined quarantined, $cleaned cleaned, $failed failed"
+fi
+log_event "$OK" "$ARGUMENTS"
+
+exit

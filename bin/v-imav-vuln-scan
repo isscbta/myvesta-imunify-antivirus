@@ -1,0 +1,106 @@
+#!/bin/bash
+# info: scan a WordPress domain for vulnerable core, plugins and themes
+# options: DOMAIN [FORMAT]
+#
+# The function reads the installed WordPress core, plugin and theme versions
+# from the files of the domain and checks them against the WPVulnerability API
+# and, when WF_API_KEY is set, the Wordfence Intelligence feed. The report is
+# saved in the private directory of the domain and in the report history.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+domain=$1
+format=${2-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-vuln.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+check_args '1' "$#" 'DOMAIN [FORMAT]'
+is_format_valid 'domain'
+imav_format_valid "$format"
+if ! command -v jq >/dev/null 2>&1; then
+    check_result $E_DISABLED "jq is not installed"
+fi
+imav_domain_owner "$domain"
+is_object_valid 'web' 'DOMAIN' "$domain"
+imav_domain_docroot "$user" "$domain"
+if ! imav_is_wordpress "$docroot"; then
+    check_result $E_NOTEXIST "$domain is not a WordPress site ($docroot)"
+fi
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+imav_ensure_dirs
+
+if [ "$format" = 'shell' ]; then
+    wp_version=$(imav_wp_version "$docroot")
+    echo "Starting vulnerability scan for $domain at $docroot (WordPress ${wp_version:-of unknown version, wp-includes/version.php is missing})"
+    # Prepare the Wordfence index first, so that the sources can be reported
+    imav_wf_index >/dev/null 2>&1
+    case $IMAV_WF_STATE in
+        ok)          echo "Sources: WPVulnerability API, Wordfence Intelligence feed (downloaded $IMAV_WF_FEED_DATE)" ;;
+        stale)       echo "Sources: WPVulnerability API, Wordfence Intelligence feed (cached copy from $IMAV_WF_FEED_DATE, feed not reachable)" ;;
+        unavailable) echo "Sources: WPVulnerability API only (Wordfence feed download failed: ${IMAV_WF_ERROR:-unknown error}; check WF_API_KEY in $VESTA/conf/imav.conf)" ;;
+        *)           echo "Sources: WPVulnerability API only (set WF_API_KEY in $VESTA/conf/imav.conf to add the Wordfence Intelligence feed; the key is free from a wordfence.com account, Integrations)" ;;
+    esac
+fi
+
+IMAV_VULN_STALE=0
+findings=$(imav_vuln_scan "$docroot")
+vulnerable=$(echo "$findings" | awk -F'\t' '$4 != "" && $4 !~ /^-/' )
+notes=$(echo "$findings" | awk -F'\t' '$4 ~ /^-/')
+count=$(echo "$vulnerable" | grep -c .)
+
+report=$(imav_write_report "$user" "$domain" 'imav-vuln' "$(echo "$vulnerable" | grep -v '^$' | imav_vuln_print csv)")
+
+if [ "$format" = 'shell' ]; then
+    if [ "$count" -gt 0 ]; then
+        echo "=== Vulnerabilities for $domain ==="
+        echo "$vulnerable" | imav_vuln_print shell
+        echo "======"
+        echo "$count vulnerability(ies). The list is saved at: $report"
+    else
+        echo "No known vulnerabilities were found for $domain."
+    fi
+    if [ -n "$notes" ]; then
+        echo "Not checked:"
+        echo "$notes" | awk -F'\t' '{ printf "  %s %s %s: %s\n", $1, $2, $3, substr($4, 3) }'
+    fi
+    if [ "$IMAV_VULN_STALE" = '1' ]; then
+        echo "Warning: the vulnerability API was not reachable, cached data older than $VULN_CACHE_TTL seconds was used."
+    fi
+else
+    echo "$vulnerable" | grep -v '^$' | imav_vuln_print "$format"
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+log_history "vulnerability scan of $domain: $count vulnerabilities"
+log_event "$OK" "$ARGUMENTS"
+
+exit

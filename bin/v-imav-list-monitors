@@ -1,0 +1,81 @@
+#!/bin/bash
+# info: list domains with scheduled security reports
+# options: [FORMAT]
+#
+# The function lists the monitored domains with their recipients, report
+# hour, state and the time of the last report.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+format=${1-shell}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+# Print one record in the chosen format
+# $1 = format, then DOMAIN USER EMAIL HOUR SUSPENDED DATE LAST
+print_record() {
+    case $1 in
+        json)  jq -c -n --arg d "$2" --arg u "$3" --arg e "$4" --arg h "$5" --arg s "$6" --arg a "$7" --arg l "$8" \
+                   '{($d): {USER: $u, EMAIL: $e, HOUR: $h, SUSPENDED: $s, DATE: $a, LAST_REPORT: $l}}' ;;
+        plain) printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" "$8" ;;
+        csv)   printf '%s,%s,"%s",%s,%s,%s,%s\n' "$2" "$3" "$4" "$5" "$6" "$7" "$8" ;;
+        shell) printf '%s|%s|%s|%s|%s|%s\n' "$2" "$3" "${4:--}" "$(printf '%02d' "$5"):00" "$6" "${8:--}" ;;
+    esac
+}
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+imav_format_valid "$format"
+imav_monitor_init
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+{
+    [ "$format" = 'csv' ] && echo 'DOMAIN,USER,EMAIL,HOUR,SUSPENDED,DATE,LAST_REPORT'
+    [ "$format" = 'shell' ] && { echo 'DOMAIN|USER|EXTRA RECIPIENTS|AT|SUSPENDED|LAST REPORT'; echo '------|----|----------------|--|---------|-----------'; }
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        DOMAIN=''; USER=''; EMAIL=''; HOUR=''; SUSPENDED=''; DATE=''
+        parse_object_kv_list_non_eval "$line"
+        print_record "$format" "$DOMAIN" "$USER" "$EMAIL" "$HOUR" "$SUSPENDED" "$DATE" "$(imav_state_get "$DOMAIN" 'LAST_REPORT')"
+    done < "$IMAV_MONITOR_CONF"
+} | case $format in
+    json)  jq -s 'add // {}' ;;
+    shell) column -t -s '|' ;;
+    *)     cat ;;
+esac
+
+if [ "$format" = 'shell' ] && [ ! -s "$IMAV_MONITOR_CONF" ]; then
+    echo "No monitored domains. Add one with: v-imav-add-monitor DOMAIN [EMAIL] [HOUR]"
+fi
+if [ "$format" = 'shell' ]; then
+    echo
+    echo "Default recipient (REPORT_EMAIL): ${REPORT_EMAIL:-not set}   Mail transport: $MAIL_TRANSPORT"
+fi
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

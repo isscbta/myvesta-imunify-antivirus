@@ -1,0 +1,35 @@
+#!/bin/bash
+# info: report the hosting panel name and version to ImunifyAV
+# options: NONE
+#
+# Called by the ImunifyAV agent through the "panel_info" key of
+# /etc/sysconfig/imunify360/integration.conf. Prints the JSON document the
+# stand-alone integration expects, with the myVesta version taken from
+# /usr/local/vesta/conf/vesta.conf.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+version=$(grep -m1 "^VERSION=" "$VESTA/conf/vesta.conf" 2>/dev/null | cut -d "'" -f 2)
+[ -z "$version" ] && version='unknown'
+
+printf '{"data": {"name": "myVesta", "version": "%s"}, "metadata": {"result": "ok"}}\n' "$version"
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+exit

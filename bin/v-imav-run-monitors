@@ -1,0 +1,80 @@
+#!/bin/bash
+# info: run the scheduled security reports due at this hour
+# options: [HOUR]
+#
+# The function runs v-imav-report-domain for every monitored domain whose
+# HOUR equals HOUR (default: the current hour) and is not suspended. Started
+# every hour by /etc/cron.d/myvesta-imav-monitor. Reports run one after the
+# other; a lock prevents two runs from overlapping.
+
+
+#----------------------------------------------------------#
+#                    Variable&Function                     #
+#----------------------------------------------------------#
+
+# Argument definition
+hour=${1-$(date +%-H)}
+
+# Importing system environment
+if [ -z "$VESTA" ]; then
+    export VESTA='/usr/local/vesta'
+fi
+
+# Includes
+source $VESTA/func/main.sh
+source $VESTA/func/imav.sh
+source $VESTA/func/imav-monitor.sh
+source $VESTA/conf/vesta.conf
+source $VESTA/conf/imav.conf
+
+LOCK="$IMAV_DATA/run-monitors.lock"
+
+
+#----------------------------------------------------------#
+#                    Verifications                         #
+#----------------------------------------------------------#
+
+is_int_format_valid "$hour" 'hour'
+imav_monitor_init
+[ -s "$IMAV_MONITOR_CONF" ] || exit 0
+imav_require_agent
+
+
+#----------------------------------------------------------#
+#                       Action                             #
+#----------------------------------------------------------#
+
+exec 9> "$LOCK"
+if ! flock -n 9; then
+    imav_log WARN "run-monitors: previous run still active, skipping hour $hour"
+    exit 0
+fi
+
+due=0
+failed=0
+while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    DOMAIN=''; USER=''; EMAIL=''; HOUR=''; SUSPENDED=''
+    parse_object_kv_list_non_eval "$line"
+    [ "$SUSPENDED" = 'yes' ] && continue
+    [ "$((10#$HOUR))" -eq "$((10#$hour))" ] || continue
+    ((due++))
+    imav_log INFO "run-monitors: reporting $DOMAIN"
+    if ! "$BIN/v-imav-report-domain" "$DOMAIN" '' yes > "$IMAV_LOG_DIR/run-monitors-$DOMAIN.log" 2>&1; then
+        ((failed++))
+        imav_log ERROR "run-monitors: report of $DOMAIN failed, see $IMAV_LOG_DIR/run-monitors-$DOMAIN.log"
+    fi
+done < "$IMAV_MONITOR_CONF"
+
+echo "$due report(s) due at hour $hour, $failed failed."
+
+
+#----------------------------------------------------------#
+#                       Vesta                              #
+#----------------------------------------------------------#
+
+# Logging
+[ "$due" -gt 0 ] && imav_log INFO "run-monitors: hour $hour, $due reports, $failed failed"
+log_event "$OK" "$ARGUMENTS"
+
+exit
