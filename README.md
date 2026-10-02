@@ -242,7 +242,7 @@ Alerts and reports use the transport set in `imav.conf`:
 - `MAIL_TRANSPORT='sendmail'`: the local Exim, sender `MAIL_FROM` (default `imav@hostname`) shown with the display name `MAIL_FROM_NAME` (default `myVesta Imunify Antivirus`).
 - `MAIL_TRANSPORT='mailgun'`: the Mailgun HTTP API, configured entirely in `imav.conf`: `MAILGUN_API_KEY`, the sending domain `MAILGUN_DOMAIN`, the sender `MAILGUN_FROM` (default `postmaster@MAILGUN_DOMAIN`) and `MAILGUN_API_URL` (default: the EU endpoint). `MAIL_FROM_NAME` is used as the display name here too.
 
-The installer asks which transport to use; with Mailgun it also asks for the API key and the sending domain (or takes them from `--mailgun-key` and `--mailgun-domain`). When myVesta's own `/usr/local/vesta/conf/mailgun.conf` exists, its values are used for the settings that are still empty.
+The installer asks which transport to use; with Mailgun it also asks for the API key and the sending domain (or takes them from `--mailgun-key` and `--mailgun-domain`). A Mailgun key already present on the server in `/usr/local/vesta/conf/mailgun.conf` (`API_KEY='...'`) is used when `imav.conf` has none.
 
 ## Cron
 

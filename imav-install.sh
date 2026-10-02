@@ -374,24 +374,14 @@ fi
 [ -n "$opt_mg_key" ]    && conf_set 'MAILGUN_API_KEY' "$opt_mg_key"
 [ -n "$opt_mg_domain" ] && conf_set 'MAILGUN_DOMAIN' "$opt_mg_domain"
 if [ "$(conf_get 'MAIL_TRANSPORT')" = 'mailgun' ]; then
-    # myVesta keeps its own Mailgun settings in conf/mailgun.conf; values that
-    # are still missing in imav.conf are taken from there as a starting point.
-    # That file belongs to myVesta and is left untouched.
-    if [ -f "$VESTA/conf/mailgun.conf" ]; then
-        taken=''
-        mv_key=$(grep "^API_KEY=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-        mv_domain=$(grep "^DOMAIN=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-        mv_from=$(grep "^FROM=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-        if [ -n "$mv_key" ] && [ -z "$(conf_get 'MAILGUN_API_KEY')" ]; then
-            conf_set 'MAILGUN_API_KEY' "$mv_key"; taken="$taken MAILGUN_API_KEY"
+    # A server may already hold a Mailgun key in conf/mailgun.conf (API_KEY='...')
+    # for other tools; it is used when imav.conf has none. The file is left untouched.
+    if [ -f "$VESTA/conf/mailgun.conf" ] && [ -z "$(conf_get 'MAILGUN_API_KEY')" ]; then
+        mg_key=$(grep "^API_KEY=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
+        if [ -n "$mg_key" ]; then
+            conf_set 'MAILGUN_API_KEY' "$mg_key"
+            say "Mailgun API key taken from $VESTA/conf/mailgun.conf"
         fi
-        if [ -n "$mv_domain" ] && [ -z "$(conf_get 'MAILGUN_DOMAIN')" ]; then
-            conf_set 'MAILGUN_DOMAIN' "$mv_domain"; taken="$taken MAILGUN_DOMAIN"
-        fi
-        if [ -n "$mv_from" ] && [ -z "$(conf_get 'MAILGUN_FROM')" ]; then
-            conf_set 'MAILGUN_FROM' "$mv_from"; taken="$taken MAILGUN_FROM"
-        fi
-        [ -n "$taken" ] && say "Taken from myVesta's $VESTA/conf/mailgun.conf into imav.conf:$taken"
     fi
     mg_key=$(conf_get 'MAILGUN_API_KEY')
     mg_domain=$(conf_get 'MAILGUN_DOMAIN')
