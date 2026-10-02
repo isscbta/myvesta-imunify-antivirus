@@ -152,8 +152,11 @@ if [ ! -f /etc/debian_version ]; then
     fail "only Debian is supported"
 fi
 debian_release=$(cut -d . -f 1 /etc/debian_version)
-if [ "$debian_release" -lt 10 ] 2>/dev/null; then
-    fail "Debian $debian_release is not supported (10, 11, 12 or 13 required)"
+if [ "$debian_release" -lt 9 ] 2>/dev/null; then
+    fail "Debian $debian_release is not supported (9 to 13 required)"
+elif [ "$debian_release" -eq 9 ] 2>/dev/null; then
+    echo "- Warning: Debian 9 is past its end of life; ImunifyAV supports it only up to version 6.11,"
+    echo "  so an older agent is installed and its command output may differ from current releases"
 elif [ "$debian_release" -eq 10 ] 2>/dev/null; then
     echo "- Warning: Debian 10 is past its end of life; ImunifyAV runs on it, but updates may stop at any time"
 fi
@@ -294,10 +297,13 @@ if [ $update_only -eq 0 ]; then
             cd /root || fail "cannot cd to /root"
             curl -sS -f -L -o imav-deploy.sh "$IMAV_DEPLOY_URL" || fail "could not download imav-deploy.sh"
             say "Running the ImunifyAV installer (this takes a few minutes)"
+            # The deploy script unpacks the web UI file by file; those thousands
+            # of lines are dropped, everything else is shown. Full log: /var/log/imav-deploy.log
+            deploy_filter() { grep -v -E '^\[[0-9: -]+\] +(extracting|inflating|creating): ' || true; }
             if [ -n "$license_key" ]; then
-                bash imav-deploy.sh --key "$license_key" || fail "ImunifyAV installation failed"
+                bash imav-deploy.sh --key "$license_key" 2>&1 | deploy_filter || fail "ImunifyAV installation failed"
             else
-                bash imav-deploy.sh || fail "ImunifyAV installation failed"
+                bash imav-deploy.sh 2>&1 | deploy_filter || fail "ImunifyAV installation failed"
             fi
             cd "$REPO_DIR" || true
         fi
