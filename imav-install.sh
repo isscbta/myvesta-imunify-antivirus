@@ -365,20 +365,26 @@ elif [ $update_only -eq 0 ] && [ -t 0 ]; then
 fi
 [ -n "$opt_mg_key" ]    && conf_set 'MAILGUN_API_KEY' "$opt_mg_key"
 [ -n "$opt_mg_domain" ] && conf_set 'MAILGUN_DOMAIN' "$opt_mg_domain"
-# Earlier versions kept the Mailgun settings in a separate mailgun.conf;
-# values that are not yet in imav.conf are taken over from it
-if [ -f "$VESTA/conf/mailgun.conf" ]; then
-    old_mg_key=$(grep "^API_KEY=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-    old_mg_domain=$(grep "^DOMAIN=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-    old_mg_from=$(grep "^FROM=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-    old_mg_url=$(grep "^API_URL=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
-    [ -n "$old_mg_key" ]    && [ -z "$(conf_get 'MAILGUN_API_KEY')" ] && conf_set 'MAILGUN_API_KEY' "$old_mg_key"
-    [ -n "$old_mg_domain" ] && [ -z "$(conf_get 'MAILGUN_DOMAIN')" ]  && conf_set 'MAILGUN_DOMAIN' "$old_mg_domain"
-    [ -n "$old_mg_from" ]   && [ -z "$(conf_get 'MAILGUN_FROM')" ]    && conf_set 'MAILGUN_FROM' "$old_mg_from"
-    [ -n "$old_mg_url" ]    && conf_set 'MAILGUN_API_URL' "$old_mg_url"
-    say "Mailgun settings moved from $VESTA/conf/mailgun.conf to imav.conf; the old file is no longer read and can be removed"
-fi
 if [ "$(conf_get 'MAIL_TRANSPORT')" = 'mailgun' ]; then
+    # myVesta keeps its own Mailgun settings in conf/mailgun.conf; values that
+    # are still missing in imav.conf are taken from there as a starting point.
+    # That file belongs to myVesta and is left untouched.
+    if [ -f "$VESTA/conf/mailgun.conf" ]; then
+        taken=''
+        mv_key=$(grep "^API_KEY=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
+        mv_domain=$(grep "^DOMAIN=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
+        mv_from=$(grep "^FROM=" "$VESTA/conf/mailgun.conf" | head -n 1 | cut -d "'" -f 2)
+        if [ -n "$mv_key" ] && [ -z "$(conf_get 'MAILGUN_API_KEY')" ]; then
+            conf_set 'MAILGUN_API_KEY' "$mv_key"; taken="$taken MAILGUN_API_KEY"
+        fi
+        if [ -n "$mv_domain" ] && [ -z "$(conf_get 'MAILGUN_DOMAIN')" ]; then
+            conf_set 'MAILGUN_DOMAIN' "$mv_domain"; taken="$taken MAILGUN_DOMAIN"
+        fi
+        if [ -n "$mv_from" ] && [ -z "$(conf_get 'MAILGUN_FROM')" ]; then
+            conf_set 'MAILGUN_FROM' "$mv_from"; taken="$taken MAILGUN_FROM"
+        fi
+        [ -n "$taken" ] && say "Taken from myVesta's $VESTA/conf/mailgun.conf into imav.conf:$taken"
+    fi
     mg_key=$(conf_get 'MAILGUN_API_KEY')
     mg_domain=$(conf_get 'MAILGUN_DOMAIN')
     if [ $update_only -eq 0 ] && [ -t 0 ]; then
