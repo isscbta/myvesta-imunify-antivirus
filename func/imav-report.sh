@@ -13,6 +13,8 @@
 : "${REPORT_MAIL_WARN:=500}"
 : "${REPORT_SSL_WARN_DAYS:=14}"
 : "${REPORT_NEW_ADMIN_DAYS:=30}"
+# Plugins that keep their own PHP files among their data in wp-content/uploads (| separated, regex)
+: "${REPORT_UPLOADS_PHP_DIRS:=sucuri|wpallimport|wpallexport|dui-snippets|wp-rollback|wpcode|wpcf7_uploads}"
 
 WPORG_API='https://api.wordpress.org'
 WPORG_CACHE_TTL=86400
@@ -240,7 +242,9 @@ imav_report_check_vuln() {
     if [ "$count" -gt 0 ]; then
         max_cvss=$(echo "$vulnerable" | awk -F'\t' '$5 != "" { if ($5+0 > m) m = $5+0 } END { print m+0 }')
         unfixed=$(echo "$vulnerable" | awk -F'\t' '$6 == "no fix"' | grep -c .)
-        if [ "$unfixed" -gt 0 ] || awk -v m="$max_cvss" 'BEGIN { exit !(m + 0 >= 9) }'; then
+        # The level follows the highest CVSS; a vulnerability without a published fix is
+        # pointed out but does not raise it, as the site is not compromised by it
+        if awk -v m="$max_cvss" 'BEGIN { exit !(m + 0 >= 9) }'; then
             report_level CRITICAL
         elif awk -v m="$max_cvss" 'BEGIN { exit !(m + 0 >= 7) }'; then
             report_level WARNING
@@ -477,53 +481,77 @@ imav_report_check_updates() {
 
 imav_report_check_php_files() {
     report_section 'php-files' 'PHP files in unexpected places'
-    local uploads_php disguised double
-    # index.php guard files that plugins put into their upload folders do not count
-    uploads_php=$(find "$docroot/wp-content/uploads" -type f \( -iname '*.php' -o -iname '*.php[0-9]' -o -iname '*.phtml' -o -iname '*.phar' -o -iname '*.php.*' \) 2>/dev/null \
+    local uploads_php known_php disguised double all f
+    # index.php guard files that plugins put into their upload folders do not count;
+    # a few plugins keep their own PHP files among their data in uploads
+    all=$(find "$docroot/wp-content/uploads" -type f \( -iname '*.php' -o -iname '*.php[0-9]' -o -iname '*.phtml' -o -iname '*.phar' -o -iname '*.php.*' \) 2>/dev/null \
         | while IFS= read -r f; do
             imav_is_guard_index "$f" && continue
             echo "$f"
-        done | head -n 50)
+        done | head -n 100)
+    known_php=$(echo "$all" | grep -E "^$docroot/wp-content/uploads/($REPORT_UPLOADS_PHP_DIRS)/" )
+    uploads_php=$(echo "$all" | grep -v -E "^$docroot/wp-content/uploads/($REPORT_UPLOADS_PHP_DIRS)/" | grep -v '^$' | head -n 50)
     disguised=$(find "$docroot" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.gif' -o -iname '*.ico' -o -iname '*.svg' -o -iname '*.webp' -o -iname '*.txt' \) -size -4M -mtime -30 -print0 2>/dev/null \
         | xargs -0 -r -n 100 sh -c 'for f; do head -c 256 "$f" 2>/dev/null | grep -q "<?php" && echo "$f"; done' _ | head -n 50)
     # a second extension that a web server may serve or an image handler may accept; vendor .default/.dist/.sample files are not that
     double=$(find "$docroot" -type f \( -iname '*.php.jpg' -o -iname '*.php.jpeg' -o -iname '*.php.png' -o -iname '*.php.gif' -o -iname '*.php.ico' -o -iname '*.php.svg' -o -iname '*.php.webp' -o -iname '*.php.txt' -o -iname '*.php.html' -o -iname '*.php.htm' -o -iname '*.php.suspected' \) ! -path "$docroot/wp-content/uploads/*" 2>/dev/null | head -n 50)
 
-    if [ -n "$uploads_php" ] || [ -n "$disguised" ]; then
+    # Code hidden in an image or text file is a backdoor technique with no legitimate use.
+    # PHP in uploads is bad practice and worth a look, but its content is judged by ImunifyAV.
+    if [ -n "$disguised" ]; then
         report_level CRITICAL
-    elif [ -n "$double" ]; then
+    elif [ -n "$uploads_php" ] || [ -n "$double" ]; then
         report_level WARNING
+    elif [ -n "$known_php" ]; then
+        report_level INFO
     fi
-    if [ -z "$uploads_php$disguised$double" ]; then
+    if [ -z "$uploads_php$known_php$disguised$double" ]; then
         report_summary 'none'
         report_line 'No PHP files in wp-content/uploads, no image or text files containing PHP code, no double extensions.'
         return
     fi
-    report_summary "$(printf '%s\n%s\n%s\n' "$uploads_php" "$disguised" "$double" | grep -c .) file(s)"
-    if [ -n "$uploads_php" ]; then
-        report_line 'PHP files inside wp-content/uploads (uploads must never contain executable code):'
-        echo "$uploads_php" | sed "s|^$docroot/|  |" | report_block
-        report_line ''
+    if [ -z "$uploads_php$disguised$double" ]; then
+        report_summary "$(echo "$known_php" | grep -c .) plugin data file(s) in uploads"
+    else
+        report_summary "$(printf '%s\n%s\n%s\n' "$uploads_php" "$disguised" "$double" | grep -c .) file(s)"
     fi
     if [ -n "$disguised" ]; then
-        report_line 'Files with an image or text extension that contain PHP code (modified in the last 30 days):'
+        report_line 'Files with an image or text extension that contain PHP code (modified in the last 30 days). Nothing legitimate does this; treat them as backdoors:'
         echo "$disguised" | sed "s|^$docroot/|  |" | report_block
+        report_line ''
+    fi
+    if [ -n "$uploads_php" ]; then
+        report_line 'PHP files inside wp-content/uploads. Uploads should not contain executable code; these were not placed there by a plugin known to do so, so check what they are (the ImunifyAV scan above judges their content):'
+        echo "$uploads_php" | sed "s|^$docroot/|  |" | report_block
         report_line ''
     fi
     if [ -n "$double" ]; then
         report_line 'Files with a double extension after .php:'
         echo "$double" | sed "s|^$docroot/|  |" | report_block
+        report_line ''
+    fi
+    if [ -n "$known_php" ]; then
+        report_line "$(echo "$known_php" | grep -c .) PHP file(s) in uploads belong to plugins that keep their data there ($(echo "$known_php" | sed "s|^$docroot/wp-content/uploads/||; s|/.*||" | sort -u | paste -sd, - | sed 's/,/, /g')); listed for reference only."
     fi
 }
 
 imav_report_check_backups() {
     report_section 'backups' 'Backups, dumps and logs reachable over the web'
-    local found dumps
-    # Database dumps anywhere in the document root, other leftovers in the top three levels
+    local found dumps logs
+    # Database dumps anywhere in the document root; archives and configuration copies
+    # in the root itself (archives deeper down are usually site content); PHP error
+    # logs in the top levels are informational
     dumps=$(find "$docroot" -type f \( -iname '*.sql' -o -iname '*.sql.gz' -o -iname '*.sql.zip' -o -iname '*.sql.bz2' -o -iname '*.mysql' -o -iname '*.dump' \) 2>/dev/null | head -n 40)
-    found=$(find "$docroot" -maxdepth 3 -type f \( -iname '*.zip' -o -iname '*.tar' -o -iname '*.tar.gz' -o -iname '*.tgz' -o -iname '*.bak' -o -iname '*.old' -o -iname 'wp-config*.php.*' -o -iname 'wp-config.php~' -o -iname 'debug.log' -o -iname 'error_log' -o -iname 'php_errorlog' \) \
-        ! -path "$docroot/wp-content/uploads/*/*" 2>/dev/null | head -n 40)
+    found=$(find "$docroot" -maxdepth 1 -type f \( -iname '*.zip' -o -iname '*.tar' -o -iname '*.tar.gz' -o -iname '*.tgz' -o -iname '*.bak' -o -iname '*.old' -o -iname 'wp-config*.php.*' -o -iname 'wp-config.php~' \) 2>/dev/null | head -n 40)
+    logs=$(find "$docroot" -maxdepth 3 -type f \( -iname 'debug.log' -o -iname 'error_log' -o -iname 'php_errorlog' \) ! -path "$docroot/wp-content/uploads/*/*" 2>/dev/null | head -n 20)
     found=$(printf '%s\n%s\n' "$dumps" "$found" | grep -v '^$' | awk '!seen[$0]++')
+    if [ -n "$logs" ] && [ -z "$found" ]; then
+        report_level INFO
+        report_summary "$(echo "$logs" | grep -c .) log file(s)"
+        report_line 'PHP error logs inside the document root; they can reveal file paths and plugin names. Not a sign of a compromise; delete them or point error logging outside public_html:'
+        echo "$logs" | sed "s|^$docroot/|  |" | report_block
+        return
+    fi
     if [ -n "$found" ]; then
         report_level WARNING
         [ -n "$dumps" ] && report_level CRITICAL
@@ -534,15 +562,20 @@ imav_report_check_backups() {
         echo "$found" | while IFS= read -r f; do
             report_table_row "${f#$docroot/}" "$(du -h "$f" 2>/dev/null | cut -f1)" "$(date -r "$f" +'%F %T' 2>/dev/null)"
         done
+        if [ -n "$logs" ]; then
+            report_line ''
+            report_line 'PHP error logs inside the document root (they can reveal file paths and plugin names):'
+            echo "$logs" | sed "s|^$docroot/|  |" | report_block
+        fi
     else
         report_summary 'none'
-        report_line 'No database dumps anywhere in the document root, and no archives, configuration copies or log files in its top three levels.'
+        report_line 'No database dumps anywhere in the document root, no archives or configuration copies in its root, no PHP error logs in its top three levels.'
     fi
 }
 
 imav_report_check_htaccess() {
     report_section 'htaccess' '.htaccess files'
-    local main="$docroot/.htaccess" files recent dangerous rewrite count f age line host
+    local main="$docroot/.htaccess" files recent dangerous cgi handler rewrite count f age line host
     if [ -f "$main" ]; then
         age=$(( ($(date +%s) - $(stat -c %Y "$main")) / 3600 ))
         if [ "$age" -le 24 ]; then
@@ -558,7 +591,7 @@ imav_report_check_htaccess() {
 
     files=$(find "$docroot" -type f -name '.htaccess' 2>/dev/null | head -n 500)
     count=$(echo "$files" | grep -c .)
-    recent=''; dangerous=''; rewrite=''
+    recent=''; dangerous=''; cgi=''; handler=''; rewrite=''
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         age=$(( ($(date +%s) - $(stat -c %Y "$f")) / 3600 ))
@@ -566,8 +599,21 @@ imav_report_check_htaccess() {
         while IFS= read -r line; do
             [ -z "$line" ] && continue
             case $line in
-                *auto_prepend_file*|*auto_append_file*|*AddHandler*php*|*AddType*php*|*SetHandler*php*)
+                *auto_prepend_file*|*auto_append_file*)
                     dangerous="$dangerous${f#$docroot/}: $line"$'\n' ;;
+                *AddHandler*|*AddType*|*SetHandler*)
+                    if echo "$line" | grep -qi 'cgi-script'; then
+                        # "AddHandler cgi-script .php ..." together with "Options -ExecCGI" is a
+                        # hardening recipe of security plugins: PHP in that directory gets a 403
+                        grep -qiE '^[[:space:]]*Options[[:space:]].*-ExecCGI' "$f" 2>/dev/null \
+                            || cgi="$cgi${f#$docroot/}: $line"$'\n'
+                    elif echo "$line" | grep -qi 'php'; then
+                        if echo "$line" | grep -qiE '\.(jpe?g|png|gif|ico|svg|webp|bmp|txt|html?|xml|json|js|css|pdf|log|dat|inc|tpl|asp|jsp)([[:space:]]|$)'; then
+                            dangerous="$dangerous${f#$docroot/}: $line"$'\n'
+                        else
+                            handler="$handler${f#$docroot/}: $line"$'\n'
+                        fi
+                    fi ;;
                 *RewriteRule*http://*|*RewriteRule*https://*|*Redirect*http://*|*Redirect*https://*)
                     host=$(echo "$line" | grep -oE 'https?://[^/ "]+' | head -n 1 | sed 's|https\?://||')
                     if [ -n "$host" ] && [ "$(imav_report_base_host "$host")" != "$(imav_report_base_host "$domain")" ]; then
@@ -580,8 +626,20 @@ imav_report_check_htaccess() {
     if [ -n "$dangerous" ]; then
         report_level CRITICAL
         report_line ''
-        report_line 'Directives that make other files executable or prepend code to every request (typical of backdoors):'
+        report_line 'Directives that run PHP code from files with another extension or prepend code to every request (typical of backdoors):'
         printf '%s' "$dangerous" | sed 's/^/  /' | report_block
+    fi
+    if [ -n "$cgi" ]; then
+        report_level WARNING
+        report_line ''
+        report_line 'Directives that register a CGI handler without "Options -ExecCGI" in the same file (with it this is a common hardening recipe; without it files may become executable):'
+        printf '%s' "$cgi" | sed 's/^/  /' | report_block
+    fi
+    if [ -n "$handler" ]; then
+        report_level INFO
+        report_line ''
+        report_line 'PHP handler directives for PHP extensions (usually left over from another hosting panel; harmless, listed for reference):'
+        printf '%s' "$handler" | sed 's/^/  /' | report_block
     fi
     if [ -n "$rewrite" ]; then
         report_level WARNING
@@ -705,20 +763,16 @@ imav_report_check_admins() {
     cutoff=$(date -d "$REPORT_NEW_ADMIN_DAYS days ago" +'%F')
     recent=$(echo "$rows" | awk -F, -v c="$cutoff" '$4 >= c { print $2 }')
     # Accounts typical of a compromise: a reserved or unresolvable email domain,
-    # a login that ends in a long random hexadecimal string, a login built from
-    # words planted accounts use (backup, seo, support, wpadmin, test, dev,
-    # temp), or an email on the site's own domain, which attackers choose
-    # because it looks plausible and never bounces.
+    # a login that ends in a long random hexadecimal string, or a login built
+    # from words planted accounts use (backup, seo, support, wpadmin, test).
     local odd
-    odd=$(echo "$rows" | awk -F, -v site="$(echo "$domain" | tr 'A-Z' 'a-z')" '
-        BEGIN { gsub(/\./, "\\.", site) }
+    odd=$(echo "$rows" | awk -F, '
         {
             login = tolower($2); email = tolower($3); note = ""
             if (email ~ /@([^.]+\.)*(invalid|internal|local|localhost|test|example)$/ || email ~ /@example\.(com|net|org)$/) note = "reserved email domain " $3
             else if (login ~ /[0-9a-f]{12,}$/) note = "random login"
             else {
-                if (login ~ /backup|seo|support|wp[-_]?admin/ || login ~ /(^|[^a-z])(test|dev|temp|tmp)([^a-z]|$)/) note = "login typical of planted accounts"
-                if (email ~ ("@(www\\.)?" site "$")) note = note (note == "" ? "" : "; ") "email on the domain of the site itself"
+                if (login ~ /backup|seo|support|wp[-_]?admin/ || login ~ /(^|[^a-z])test([^a-z]|$)/) note = "login typical of planted accounts"
             }
             if (note != "") print $2 " (" note ")"
         }')
@@ -738,7 +792,7 @@ imav_report_check_admins() {
     if [ -n "$odd" ]; then
         report_level WARNING
         report_line ''
-        report_line 'Administrator account(s) to review, with the traits of accounts planted by an attacker (reserved email domain, random login, login built from words such as backup, seo, support, wpadmin, test, or an email on the domain of the site itself):'
+        report_line 'Administrator account(s) to review, with the traits of accounts planted by an attacker (reserved email domain, random login, or a login built from words such as backup, seo, support, wpadmin, test):'
         echo "$odd" | sed 's/^/  /' | report_block
     fi
     report_summary "$(echo "$rows" | grep -c .) administrator(s)${new:+, NEW: $(echo "$new" | tr '\n' ' ')}${odd:+, suspicious: $(echo "$odd" | grep -c .)}"
@@ -855,23 +909,28 @@ imav_report_check_php_version() {
 imav_report_check_hidden() {
     report_section 'hidden' 'Hidden files and symbolic links'
     local hidden links target l
-    hidden=$(find "$docroot" -maxdepth 2 -name '.*' ! -name '.htaccess' ! -name '.htpasswd' ! -name '.well-known' ! -name '.user.ini' ! -name '.maintenance' ! -name '.' 2>/dev/null | head -n 40)
-    links=''
+    # .cagefs, .cl.selector and .rnd are CloudLinux and OpenSSL leftovers from other panels
+    hidden=$(find "$docroot" -maxdepth 2 -name '.*' ! -name '.htaccess' ! -name '.htpasswd' ! -name '.well-known' ! -name '.user.ini' ! -name '.maintenance*' ! -name '.cagefs' ! -name '.cl.selector' ! -name '.rnd' ! -name '.' 2>/dev/null | grep -v '/\.cagefs/' | head -n 40)
+    links=''; outside=0
+    local home_dir="${docroot%/web/*}"
     while IFS= read -r l; do
         [ -z "$l" ] && continue
         target=$(readlink -f "$l" 2>/dev/null)
         case "$target" in
             "$docroot"/*) ;;
-            *) links="$links${l#$docroot/} -> $target"$'\n' ;;
+            "$home_dir"/*) links="$links${l#$docroot/} -> $target"$'\n' ;;
+            *) links="$links${l#$docroot/} -> $target"$'\n'; outside=1 ;;
         esac
-    done < <(find "$docroot" -type l 2>/dev/null | head -n 200)
+    done < <(find "$docroot" -type l ! -path '*/.cagefs/*' 2>/dev/null | head -n 200)
 
-    if echo "$hidden" | grep -q '/\.git$\|/\.svn$\|/\.env$'; then
+    if echo "$hidden" | grep -q -E '/\.(git|svn|hg|env)$'; then
         report_level WARNING
     elif [ -n "$hidden" ]; then
         report_level INFO
     fi
-    [ -n "$links" ] && report_level WARNING
+    if [ -n "$links" ]; then
+        if [ "$outside" -eq 1 ]; then report_level WARNING; else report_level INFO; fi
+    fi
     if [ -z "$hidden$links" ]; then
         report_summary 'none'
         report_line 'No unexpected hidden files in the top two levels and no symbolic links pointing outside the document root.'
@@ -884,7 +943,7 @@ imav_report_check_hidden() {
     fi
     if [ -n "$links" ]; then
         report_line ''
-        report_line 'Symbolic links pointing outside the document root:'
+        report_line 'Symbolic links pointing outside the document root (links into the same home directory are normal, links elsewhere deserve a look):'
         printf '%s' "$links" | sed 's/^/  /' | report_block
     fi
 }

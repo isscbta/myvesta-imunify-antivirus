@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Report levels recalibrated so that CRITICAL means a likely compromise or an exposed secret: PHP files in `wp-content/uploads` are WARNING (plugin data directories listed in `REPORT_UPLOADS_PHP_DIRS` are INFO), code hidden in image or text files stays CRITICAL; `.htaccess` is CRITICAL only for `auto_prepend_file` and PHP handlers on non-PHP extensions, the `cgi-script` + `Options -ExecCGI` hardening recipe and PHP handlers for `.php` are no longer flagged; vulnerability level follows the CVSS only; archives count only in the root of the document root and PHP error logs are INFO; CloudLinux leftovers (`.cagefs`, `.cl.selector`, `.rnd`) and symbolic links inside the home directory are no longer warnings.
+- The administrators check no longer treats an email on the domain of the site, or logins containing dev/temp/tmp, as suspicious.
+- Security plugin directories (`wflogs`, `imunify-security`, `aiowps_backups`, `ai1wm-backups`, `updraft`, `backups-dup-lite`, `backup-guard`, `wpvividbackups`) are known locations in `wp-content`.
+- New unit test `test/test-report-checks.sh` for the file-based report checks.
+
 ## 1.0.0 (2026-10-02)
 
 First release.

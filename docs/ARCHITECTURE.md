@@ -228,16 +228,16 @@ Checks and their data sources:
 | Core integrity | `api.wordpress.org/core/checksums/1.0/?version=V&locale=en_US`, cached; `md5sum` of `wp-admin`, `wp-includes` and root files; unknown PHP files in the core directories |
 | Plugin integrity | `v-run-wp-cli DOMAIN plugin verify-checksums --all --format=csv` (skipped when wp-cli does not run) |
 | Updates | `api.wordpress.org` version-check, plugin and theme info endpoints, cached 24 h, compared with `imav_version_compare` |
-| PHP files in unexpected places | `find` in uploads; image and text files modified in the last 30 days whose first 256 bytes contain `<?php`; double extensions |
-| Backups and dumps | `find -maxdepth 3` for archives, SQL, `.bak`, `.old`, config copies, `debug.log`, `error_log` |
-| `.htaccess` | all `.htaccess` files: `auto_prepend_file`, `AddHandler`/`AddType`/`SetHandler` with php, `RewriteRule`/`Redirect` to another registrable domain, recent changes |
+| PHP files in unexpected places | `find` in uploads (guard `index.php` excluded, directories in `REPORT_UPLOADS_PHP_DIRS` listed as plugin data); image and text files modified in the last 30 days whose first 256 bytes contain `<?php` (the only CRITICAL case); double extensions |
+| Backups and dumps | SQL dumps anywhere (CRITICAL); archives, `.bak`, `.old` and config copies in the docroot root only (WARNING); `debug.log`, `error_log` in the top three levels (INFO) |
+| `.htaccess` | all `.htaccess` files: `auto_prepend_file` and PHP handlers for non-PHP extensions (CRITICAL); `cgi-script` handler without `Options -ExecCGI` in the same file (WARNING, with it the directive is a hardening recipe); PHP handlers for `.php` (INFO); `RewriteRule`/`Redirect` to another registrable domain; recent changes |
 | Site from outside | `curl -L` of the home page (final host compared with the domain, HTTP code, meta refresh, external script hosts), `openssl s_client` certificate end date |
 | Administrators | `v-run-wp-cli user list --role=administrator`, database fallback; compared with the state |
 | Plugins | directory listing, `plugin list` for inactive ones, compared with the state |
 | Cron | `v-run-wp-cli cron event list`, core hooks separated from plugin and custom ones |
 | Outgoing mail | Exim `mainlog` and `mainlog.1`, `<=` lines with `U=user` in the last 24 hours |
 | PHP version | `v-get-php-version-of-domain`, end-of-life table in the function |
-| Hidden files and symlinks | `find -maxdepth 2 -name '.*'`, `find -type l` with `readlink -f` outside the docroot |
+| Hidden files and symlinks | `find -maxdepth 2 -name '.*'` (`.cagefs`, `.cl.selector`, `.rnd`, `.maintenance*` ignored; `.git`, `.svn`, `.hg`, `.env` WARNING); `find -type l` with `readlink -f`: targets inside the same home directory INFO, elsewhere WARNING |
 | Sizes | `du`, `find -type f | wc -l`, compared with the state |
 | Root PHP, modified files | `find` in the root and over `*.php`, sorted by modification and status change time |
 

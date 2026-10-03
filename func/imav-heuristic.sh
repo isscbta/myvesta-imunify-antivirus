@@ -12,7 +12,7 @@
 # Requires func/imav.sh.
 
 # wp-content directories that legitimately contain PHP files
-IMAV_HEURISTIC_KNOWN_DIRS='plugins themes uploads mu-plugins upgrade languages cache upgrade-temp-backup w3tc-config wp-rocket-config et-cache litespeed advanced-cache.php object-cache.php db.php index.php'
+IMAV_HEURISTIC_KNOWN_DIRS='plugins themes uploads mu-plugins upgrade languages cache upgrade-temp-backup w3tc-config wp-rocket-config et-cache litespeed wflogs imunify-security aiowps_backups ai1wm-backups updraft backups-dup-lite backup-guard wpvividbackups advanced-cache.php object-cache.php db.php index.php'
 
 # Run the checks on a document root. Prints TSV records.
 # $1 = docroot

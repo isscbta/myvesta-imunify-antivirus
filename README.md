@@ -187,16 +187,16 @@ The report is sent as HTML with a plain-text alternative, printed to the termina
 |---|---|---|
 | Malware scan (ImunifyAV) | infected files found | |
 | Unexpected locations in wp-content | | PHP in `wp-content` directories that nothing legitimate creates, plugin or theme directories with a random suffix |
-| Known vulnerabilities | CVSS 9.0 or higher, or no fix available | CVSS 7.0 to 8.9 |
+| Known vulnerabilities | CVSS 9.0 or higher | CVSS 7.0 to 8.9 (a vulnerability without a published fix is pointed out but does not change the level) |
 | Database scan | signature hit in a table row | heuristic finding |
 | WordPress core integrity (official checksums) | modified or unknown files in `wp-admin`, `wp-includes` or the root | core files missing |
 | Plugin integrity (wordpress.org checksums via wp-cli) | | plugin files differ from the release |
 | Available updates | | WordPress core outdated (plugins and themes: INFO) |
-| PHP files in unexpected places | PHP in `wp-content/uploads`, image or text files containing PHP | double extensions after `.php` |
-| Backups, dumps and logs reachable over the web | database dump anywhere in the document root | archives, config copies, debug logs |
-| `.htaccess` files | `auto_prepend_file`, handlers that make other files executable | redirects to external hosts |
+| PHP files in unexpected places | image or text files containing PHP code | PHP in `wp-content/uploads` outside the directories of plugins known to keep PHP there (`REPORT_UPLOADS_PHP_DIRS`), double extensions after `.php` |
+| Backups, dumps and logs reachable over the web | database dump anywhere in the document root | archives and config copies in the root of the document root (PHP error logs: INFO) |
+| `.htaccess` files | `auto_prepend_file`, PHP handler assigned to non-PHP extensions | CGI handler without `Options -ExecCGI`, redirects to external hosts (the `cgi-script` + `-ExecCGI` hardening recipe and PHP handlers for `.php` are not flagged) |
 | Site seen from outside | home page redirects to another domain, SSL certificate expired | site unreachable, HTTP 5xx, meta refresh, certificate expiring soon |
-| WordPress administrators | | new administrator since the previous report, or registered in the last 30 days |
+| WordPress administrators | | new administrator since the previous report, registered in the last 30 days, or with traits of planted accounts (reserved email domain, random login, login such as backup, seo, support, wpadmin, test) |
 | Plugins | | (new and inactive plugins: INFO) |
 | WordPress cron tasks | | (plugin and custom events listed for review) |
 | Outgoing mail from this account | | more than `REPORT_MAIL_WARN` messages in 24 hours |
@@ -225,6 +225,7 @@ File `/usr/local/vesta/conf/imav.conf`, myVesta `KEY='value'` format, created by
 | `REPORT_IN_DOMAIN_DIR` | `private` | Where per-domain reports go: `private`, `public_html` or `none` |
 | `REPORT_HISTORY_DIR`, `REPORT_KEEP_DAYS` | `/var/log/myvesta-imav/reports`, `90` | Report history and retention |
 | `REPORT_FILE_GROWTH_WARN`, `REPORT_MAIL_WARN`, `REPORT_SSL_WARN_DAYS`, `REPORT_NEW_ADMIN_DAYS` | `500`, `500`, `14`, `30` | Thresholds of the report checks |
+| `REPORT_UPLOADS_PHP_DIRS` | `sucuri\|wpallimport\|...` | Directories under `wp-content/uploads` whose PHP files belong to a plugin and are listed for reference only |
 | `QUARANTINE_DIR`, `BACKUP_DIR`, `CACHE_DIR` | `/srv/wp-quarantine`, `/usr/local/vesta/data/imav/backups`, `/var/cache/imav` | Quarantine, pre-remediation backups, download cache |
 | `REMEDIATE_USE_IMUNIFY_CLEANUP` | `yes` | Try the ImunifyAV+ cleanup first when a license is active |
 | `IMUNIFY_SEND_FILES_FOR_ANALYSIS`, `IMUNIFY_DETECT_ELF`, `IMUNIFY_KEEP_ORIGINAL_DAYS` | `no`, `no`, `30` | ImunifyAV settings applied by the installer |
