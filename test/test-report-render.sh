@@ -73,7 +73,7 @@ echo "$html" | grep -q 'WP Rocket &lt;3.23.3.3 &amp; &quot\|WP Rocket &lt;3.23.3
 echo "$text" | grep -q 'theme  |  x  |  -  |  empty column kept  |  -' && ok || bad 'text: empty cells kept as -'
 echo "$html" | grep -q '<pre style' && ok || bad 'html: preformatted block'
 [ "$(echo "$html" | grep -c '<pre style')" -eq 1 ] && ok || bad "html: two block lines must form one <pre>, got $(echo "$html" | grep -c '<pre style')"
-echo "$html" | grep -q '^  wp-includes/a.php$' && ok || bad 'html: block lines separated by newlines inside the <pre>'
+echo "$html" | grep -q '^  wp-admin/b.php$' && ok || bad 'html: block lines separated by newlines inside the <pre>'
 [ "$(echo "$html" | grep -c '<table')" -eq 2 ] && ok || bad "html: expected 2 tables (summary + vuln), got $(echo "$html" | grep -c '<table')"
 echo "$html" | grep -q 'id="02-vuln"' && ok || bad 'html: section anchor'
 
